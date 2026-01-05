@@ -183,16 +183,17 @@ function initMap() {
     });
 }
 
-// 加载原始JSON数据
-async function loadWindData(filename = 'outputV2.json') {
+// 加载风场数据（统一函数）
+async function loadWindData(filename = 'outputV2.json', timeIndex = 0) {
     try {
         const response = await fetch(`../../data/output_json/${filename}`);
         const rawData = await response.json();
 
         console.log('原始数据加载完成', rawData);
+        console.log('加载时间点:', timeIndex);
 
-        // 解析数据
-        const windData = parseRawData(rawData);
+        // 解析数据，支持指定时间索引
+        const windData = parseRawData(rawData, timeIndex);
         const velocityData = convertToVelocityFormat(windData);
 
         if (windLayer) map.removeLayer(windLayer);
@@ -248,7 +249,7 @@ async function loadWindData(filename = 'outputV2.json') {
         map.fitBounds(bounds, { padding: [10, 10] });
 
         // 更新信息显示
-        updateDataInfo(windData, filename);
+        updateDataInfo(windData, filename, timeIndex);
 
         // 更新时间选择器
         updateTimeSelector(rawData);
@@ -257,19 +258,25 @@ async function loadWindData(filename = 'outputV2.json') {
 
     } catch (error) {
         console.error('加载数据失败:', error);
-        alert(`加载风场数据失败: ${filename}，请检查数据文件是否存在`);
+        alert(`加载风场数据失败: ${filename} 时间点 ${timeIndex + 1}，请检查数据文件是否存在`);
     }
 }
 
-// 解析原始数据格式
-function parseRawData(rawData) {
+// 解析原始数据格式（统一函数）
+function parseRawData(rawData, timeIndex = 0) {
     const variables = rawData.variables;
     const lonData = variables.lon.data;
     const latData = variables.lat.data;
 
+    // 检查时间索引是否有效
+    if (timeIndex >= variables.U10.data.length || timeIndex < 0) {
+        console.warn(`时间索引 ${timeIndex} 超出范围，使用默认时间点 0`);
+        timeIndex = 0;
+    }
+
     // U10和V10是三维数组[time, lat, lon]
-    const u10_3d = variables.U10.data[0]; // 第一个时间点 [lat, lon]
-    const v10_3d = variables.V10.data[0]; // 第一个时间点 [lat, lon]
+    const u10_3d = variables.U10.data[timeIndex]; // 指定时间点 [lat, lon]
+    const v10_3d = variables.V10.data[timeIndex]; // 指定时间点 [lat, lon]
 
     console.log('数据结构:', {
         lon: lonData.length,
@@ -277,8 +284,38 @@ function parseRawData(rawData) {
         u10_rows: u10_3d.length,
         u10_cols: u10_3d[0].length,
         v10_rows: v10_3d.length,
-        v10_cols: v10_3d[0].length
+        v10_cols: v10_3d[0].length,
+        timeIndex: timeIndex
     });
+
+    // 检测网格分布是否均匀
+    const checkGridUniformity = (coords, name) => {
+        if (coords.length < 2) return { isUniform: true, avgStep: 0 };
+        
+        const steps = [];
+        for (let i = 0; i < coords.length - 1; i++) {
+            steps.push(Math.abs(coords[i + 1] - coords[i]));
+        }
+        
+        const avgStep = steps.reduce((a, b) => a + b) / steps.length;
+        const variance = steps.reduce((sum, step) => sum + Math.pow(step - avgStep, 2), 0) / steps.length;
+        const stdDev = Math.sqrt(variance);
+        
+        // 如果标准差小于平均步长的1%认为是均匀的
+        const isUniform = stdDev < Math.abs(avgStep * 0.01);
+        
+        return { isUniform, avgStep, stdDev, steps };
+    };
+    
+    const lonGridInfo = checkGridUniformity(lonData, 'longitude');
+    const latGridInfo = checkGridUniformity(latData, 'latitude');
+    
+    if (!lonGridInfo.isUniform || !latGridInfo.isUniform) {
+        console.warn('检测到非均匀网格分布:', {
+            lon: { isUniform: lonGridInfo.isUniform, stdDev: lonGridInfo.stdDev },
+            lat: { isUniform: latGridInfo.isUniform, stdDev: latGridInfo.stdDev }
+        });
+    }
 
     // 将二维网格数据展平为一维数组
     const u10Data = [];
@@ -321,14 +358,32 @@ function parseRawData(rawData) {
         vMax: vMax,
         speedMin: speedMin,
         speedMax: speedMax,
-        totalPoints: u10Data.length
+        totalPoints: u10Data.length,
+        // 添加网格分布信息
+        lonGridInfo: lonGridInfo,
+        latGridInfo: latGridInfo,
+        timeIndex: timeIndex
     };
 }
 
-// 转换为leaflet-velocity格式
+// 转换为leaflet-velocity格式（改进版）
 function convertToVelocityFormat(windData) {
-    const lonStep = (windData.lonMax - windData.lonMin) / (windData.width - 1);
-    const latStep = (windData.latMax - windData.latMin) / (windData.height - 1);
+    // 根据网格均匀性选择合适的步长计算方式
+    let lonStep, latStep;
+    
+    if (windData.lonGridInfo.isUniform) {
+        // 均匀网格使用平均步长
+        lonStep = windData.lonGridInfo.avgStep;
+    } else {
+        // 非均匀网格使用首尾差值的平均值
+        lonStep = (windData.lonMax - windData.lonMin) / (windData.width - 1);
+    }
+    
+    if (windData.latGridInfo.isUniform) {
+        latStep = windData.latGridInfo.avgStep;
+    } else {
+        latStep = (windData.latMax - windData.latMin) / (windData.height - 1);
+    }
 
     return [
         {
@@ -344,7 +399,10 @@ function convertToVelocityFormat(windData) {
                 nx: windData.width,
                 ny: windData.height
             },
-            data: windData.u10Data
+            data: windData.u10Data,
+            // 保留实际坐标信息用于插值
+            lonCoords: windData.lonData,
+            latCoords: windData.latData
         },
         {
             header: {
@@ -359,20 +417,23 @@ function convertToVelocityFormat(windData) {
                 nx: windData.width,
                 ny: windData.height
             },
-            data: windData.v10Data
+            data: windData.v10Data,
+            lonCoords: windData.lonData,
+            latCoords: windData.latData
         }
     ];
 }
 
 // 更新数据信息显示
-function updateDataInfo(windData, filename) {
+function updateDataInfo(windData, filename, timeIndex = 0) {
     document.getElementById('dataInfo').innerHTML = `
         <div><strong>📊 数据源:</strong> ${filename || 'NetCDF 原始数据'}</div>
-        <div><strong>📅 当前时间:</strong> 2025-06-27 01:00 UTC</div>
+        <div><strong>📅 当前时间:</strong> 时间点 ${timeIndex + 1}</div>
         <div><strong>💨 风速范围:</strong> ${windData.speedMin.toFixed(2)} - ${windData.speedMax.toFixed(2)} m/s</div>
         <div><strong>🌍 经纬度:</strong> ${windData.lonMin.toFixed(1)}°-${windData.lonMax.toFixed(1)}°E, ${windData.latMin.toFixed(1)}°-${windData.latMax.toFixed(1)}°N</div>
         <div><strong>📏 网格尺寸:</strong> ${windData.width} × ${windData.height}</div>
         <div><strong>🔢 数据点数:</strong> ${windData.totalPoints.toLocaleString()}</div>
+        <div><strong>📏 网格均匀性:</strong> 经度: ${windData.lonGridInfo.isUniform ? '是' : '否'}, 纬度: ${windData.latGridInfo.isUniform ? '是' : '否'}</div>
     `;
 }
 
@@ -389,122 +450,6 @@ function updateTimeSelector(rawData) {
         option.textContent = `时间点 ${i + 1}`;
         select.appendChild(option);
     }
-}
-
-// 根据时间索引加载风场数据
-async function loadWindDataAtTimeIndex(filename, timeIndex) {
-    try {
-        const response = await fetch(`../../data/output_json/${filename}`);
-        const rawData = await response.json();
-
-        console.log('原始数据加载完成', rawData);
-        console.log('切换到时间点:', timeIndex);
-
-        // 解析数据，指定时间索引
-        const windData = parseRawDataAtTimeIndex(rawData, timeIndex);
-        const velocityData = convertToVelocityFormat(windData);
-
-        // 更新现有风层
-        if (windLayer) {
-            windLayer.setData(velocityData, windData.speedMax);
-        } else {
-            // 如果没有风层，则创建一个
-            windLayer = L.velocityLayer({
-                displayValues: true,
-                displayOptions: {
-                    velocityType: 'Wind',
-                    position: 'bottomleft',
-                    emptyString: '无数据',
-                    showCardinal: true
-                },
-                data: velocityData,
-                maxVelocity: windData.speedMax,
-                velocityScale: 0.01,
-                particleAge: 60,
-                lineWidth: 1,
-                particleMultiplier: 3000/500/1000,
-                frameRate: 60,
-                colorScale: ['#3288bd', '#66c2a5', '#abdda4', '#e6f598', '#fee08b', '#fdae61', '#f46d43', '#d53e4f'],
-                minVelocity: 0,
-                maxVelocity: windData.speedMax,
-                globalAlpha: 0.9
-            }).addTo(map);
-        }
-
-        // 更新信息显示
-        updateDataInfo(windData, filename);
-
-        console.log('风场数据在时间点', timeIndex, '更新完成');
-
-    } catch (error) {
-        console.error('加载时间点数据失败:', error);
-        alert(`加载风场数据失败: ${filename} 时间点 ${timeIndex + 1}，请检查数据文件是否存在`);
-    }
-}
-
-// 解析原始数据格式（指定时间索引）
-function parseRawDataAtTimeIndex(rawData, timeIndex = 0) {
-    const variables = rawData.variables;
-    const lonData = variables.lon.data;
-    const latData = variables.lat.data;
-
-    // U10和V10是三维数组[time, lat, lon]
-    const u10_3d = variables.U10.data[timeIndex]; // 指定时间点 [lat, lon]
-    const v10_3d = variables.V10.data[timeIndex]; // 指定时间点 [lat, lon]
-
-    console.log('数据结构:', {
-        lon: lonData.length,
-        lat: latData.length,
-        u10_rows: u10_3d.length,
-        u10_cols: u10_3d[0].length,
-        v10_rows: v10_3d.length,
-        v10_cols: v10_3d[0].length,
-        timeIndex: timeIndex
-    });
-
-    // 将二维网格数据展平为一维数组
-    const u10Data = [];
-    const v10Data = [];
-
-    for (let lat = 0; lat < latData.length; lat++) {
-        for (let lon = 0; lon < lonData.length; lon++) {
-            u10Data.push(u10_3d[lat][lon]);
-            v10Data.push(v10_3d[lat][lon]);
-        }
-    }
-
-    // 计算统计值
-    const uMin = Math.min(...u10Data);
-    const uMax = Math.max(...u10Data);
-    const vMin = Math.min(...v10Data);
-    const vMax = Math.max(...v10Data);
-
-    // 计算风速
-    const speeds = u10Data.map((u, i) => Math.sqrt(u * u + v10Data[i] * v10Data[i]));
-    const speedMin = Math.min(...speeds);
-    const speedMax = Math.max(...speeds);
-
-    console.log('统计值:', { uMin, uMax, vMin, vMax, speedMin, speedMax });
-
-    return {
-        width: lonData.length,
-        height: latData.length,
-        lonData: lonData,
-        latData: latData,
-        u10Data: u10Data,
-        v10Data: v10Data,
-        lonMin: Math.min(...lonData),
-        lonMax: Math.max(...lonData),
-        latMin: Math.min(...latData),
-        latMax: Math.max(...latData),
-        uMin: uMin,
-        uMax: uMax,
-        vMin: vMin,
-        vMax: vMax,
-        speedMin: speedMin,
-        speedMax: speedMax,
-        totalPoints: u10Data.length
-    };
 }
 
 // 设置控制面板
@@ -529,7 +474,7 @@ function setupControls() {
     document.getElementById('timeSelect').addEventListener('change', function() {
         const selectedTimeIndex = parseInt(this.value);
         if (!isNaN(selectedTimeIndex) && currentDataFile) {
-            loadWindDataAtTimeIndex(currentDataFile, selectedTimeIndex);
+            loadWindData(currentDataFile, selectedTimeIndex);
         }
     });
 
