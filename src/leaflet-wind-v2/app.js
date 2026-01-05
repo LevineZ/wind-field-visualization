@@ -1,5 +1,60 @@
 let map, windLayer, isWindVisible = true;
 
+let availableDataFiles = [];
+let currentDataFile = null;
+
+// 获取可用的JSON数据文件列表
+async function loadAvailableDataFiles() {
+    try {
+        // 尝试读取目录中的文件列表
+        const response = await fetch('../../data/output_json/');
+        const text = await response.text();
+
+        // 解析HTML目录列表，提取JSON文件
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'text/html');
+        const links = doc.querySelectorAll('a[href$=".json"]');
+
+        availableDataFiles = Array.from(links).map(link => {
+            const filename = link.getAttribute('href');
+            return {
+                filename: filename,
+                displayName: filename.replace('.json', '').replace(/[_-]/g, ' ')
+            };
+        });
+
+        updateDataFileSelector();
+
+    } catch (error) {
+        console.warn('无法自动获取文件列表，使用默认文件:', error);
+        // 如果无法获取目录列表，使用默认文件
+        availableDataFiles = [
+            { filename: 'outputV2.json', displayName: 'outputV2' }
+        ];
+        updateDataFileSelector();
+    }
+}
+
+// 更新数据文件选择器
+function updateDataFileSelector() {
+    const selector = document.getElementById('dataFileSelect');
+    selector.innerHTML = '<option value="">选择数据文件...</option>';
+
+    availableDataFiles.forEach(file => {
+        const option = document.createElement('option');
+        option.value = file.filename;
+        option.textContent = file.displayName;
+        selector.appendChild(option);
+    });
+
+    // 默认选择第一个文件
+    if (availableDataFiles.length > 0) {
+        selector.value = availableDataFiles[0].filename;
+        currentDataFile = availableDataFiles[0].filename;
+        loadWindData(currentDataFile);
+    }
+}
+
 // 初始化地图
 function initMap() {
     map = L.map('map', {
@@ -129,9 +184,9 @@ function initMap() {
 }
 
 // 加载原始JSON数据
-async function loadWindData() {
+async function loadWindData(filename = 'outputV2.json') {
     try {
-        const response = await fetch('../../data/output_json/outputV2.json');
+        const response = await fetch(`../../data/output_json/${filename}`);
         const rawData = await response.json();
 
         console.log('原始数据加载完成', rawData);
@@ -159,7 +214,6 @@ async function loadWindData() {
             frameRate: 60,
             colorScale: ['#3288bd', '#66c2a5', '#abdda4', '#e6f598', '#fee08b', '#fdae61', '#f46d43', '#d53e4f'],
             minVelocity: 0,
-            maxVelocity: windData.speedMax,
             globalAlpha: 0.9
         }).addTo(map);
 
@@ -194,7 +248,7 @@ async function loadWindData() {
         map.fitBounds(bounds, { padding: [10, 10] });
 
         // 更新信息显示
-        updateDataInfo(windData);
+        updateDataInfo(windData, filename);
 
         // 更新时间选择器
         updateTimeSelector(rawData);
@@ -203,7 +257,7 @@ async function loadWindData() {
 
     } catch (error) {
         console.error('加载数据失败:', error);
-        alert('加载风场数据失败，请检查数据文件是否存在');
+        alert(`加载风场数据失败: ${filename}，请检查数据文件是否存在`);
     }
 }
 
@@ -311,9 +365,9 @@ function convertToVelocityFormat(windData) {
 }
 
 // 更新数据信息显示
-function updateDataInfo(windData) {
+function updateDataInfo(windData, filename) {
     document.getElementById('dataInfo').innerHTML = `
-        <div><strong>📊 数据源:</strong> NetCDF 原始数据</div>
+        <div><strong>📊 数据源:</strong> ${filename || 'NetCDF 原始数据'}</div>
         <div><strong>📅 当前时间:</strong> 2025-06-27 01:00 UTC</div>
         <div><strong>💨 风速范围:</strong> ${windData.speedMin.toFixed(2)} - ${windData.speedMax.toFixed(2)} m/s</div>
         <div><strong>🌍 经纬度:</strong> ${windData.lonMin.toFixed(1)}°-${windData.lonMax.toFixed(1)}°E, ${windData.latMin.toFixed(1)}°-${windData.latMax.toFixed(1)}°N</div>
@@ -325,7 +379,7 @@ function updateDataInfo(windData) {
 // 更新时间选择器
 function updateTimeSelector(rawData) {
     const select = document.getElementById('timeSelect');
-    select.innerHTML = '<option value="0" selected>2025-06-27 01:00 UTC</option>';
+    select.innerHTML = '<option value="0" selected>时间点 1</option>';
 
     // 如果有多个时间点，可以在这里添加
     const timeCount = rawData.variables.U10.data.length;
@@ -337,6 +391,122 @@ function updateTimeSelector(rawData) {
     }
 }
 
+// 根据时间索引加载风场数据
+async function loadWindDataAtTimeIndex(filename, timeIndex) {
+    try {
+        const response = await fetch(`../../data/output_json/${filename}`);
+        const rawData = await response.json();
+
+        console.log('原始数据加载完成', rawData);
+        console.log('切换到时间点:', timeIndex);
+
+        // 解析数据，指定时间索引
+        const windData = parseRawDataAtTimeIndex(rawData, timeIndex);
+        const velocityData = convertToVelocityFormat(windData);
+
+        // 更新现有风层
+        if (windLayer) {
+            windLayer.setData(velocityData, windData.speedMax);
+        } else {
+            // 如果没有风层，则创建一个
+            windLayer = L.velocityLayer({
+                displayValues: true,
+                displayOptions: {
+                    velocityType: 'Wind',
+                    position: 'bottomleft',
+                    emptyString: '无数据',
+                    showCardinal: true
+                },
+                data: velocityData,
+                maxVelocity: windData.speedMax,
+                velocityScale: 0.01,
+                particleAge: 60,
+                lineWidth: 1,
+                particleMultiplier: 3000/500/1000,
+                frameRate: 60,
+                colorScale: ['#3288bd', '#66c2a5', '#abdda4', '#e6f598', '#fee08b', '#fdae61', '#f46d43', '#d53e4f'],
+                minVelocity: 0,
+                maxVelocity: windData.speedMax,
+                globalAlpha: 0.9
+            }).addTo(map);
+        }
+
+        // 更新信息显示
+        updateDataInfo(windData, filename);
+
+        console.log('风场数据在时间点', timeIndex, '更新完成');
+
+    } catch (error) {
+        console.error('加载时间点数据失败:', error);
+        alert(`加载风场数据失败: ${filename} 时间点 ${timeIndex + 1}，请检查数据文件是否存在`);
+    }
+}
+
+// 解析原始数据格式（指定时间索引）
+function parseRawDataAtTimeIndex(rawData, timeIndex = 0) {
+    const variables = rawData.variables;
+    const lonData = variables.lon.data;
+    const latData = variables.lat.data;
+
+    // U10和V10是三维数组[time, lat, lon]
+    const u10_3d = variables.U10.data[timeIndex]; // 指定时间点 [lat, lon]
+    const v10_3d = variables.V10.data[timeIndex]; // 指定时间点 [lat, lon]
+
+    console.log('数据结构:', {
+        lon: lonData.length,
+        lat: latData.length,
+        u10_rows: u10_3d.length,
+        u10_cols: u10_3d[0].length,
+        v10_rows: v10_3d.length,
+        v10_cols: v10_3d[0].length,
+        timeIndex: timeIndex
+    });
+
+    // 将二维网格数据展平为一维数组
+    const u10Data = [];
+    const v10Data = [];
+
+    for (let lat = 0; lat < latData.length; lat++) {
+        for (let lon = 0; lon < lonData.length; lon++) {
+            u10Data.push(u10_3d[lat][lon]);
+            v10Data.push(v10_3d[lat][lon]);
+        }
+    }
+
+    // 计算统计值
+    const uMin = Math.min(...u10Data);
+    const uMax = Math.max(...u10Data);
+    const vMin = Math.min(...v10Data);
+    const vMax = Math.max(...v10Data);
+
+    // 计算风速
+    const speeds = u10Data.map((u, i) => Math.sqrt(u * u + v10Data[i] * v10Data[i]));
+    const speedMin = Math.min(...speeds);
+    const speedMax = Math.max(...speeds);
+
+    console.log('统计值:', { uMin, uMax, vMin, vMax, speedMin, speedMax });
+
+    return {
+        width: lonData.length,
+        height: latData.length,
+        lonData: lonData,
+        latData: latData,
+        u10Data: u10Data,
+        v10Data: v10Data,
+        lonMin: Math.min(...lonData),
+        lonMax: Math.max(...lonData),
+        latMin: Math.min(...latData),
+        latMax: Math.max(...latData),
+        uMin: uMin,
+        uMax: uMax,
+        vMin: vMin,
+        vMax: vMax,
+        speedMin: speedMin,
+        speedMax: speedMax,
+        totalPoints: u10Data.length
+    };
+}
+
 // 设置控制面板
 function setupControls() {
     // 控制面板切换
@@ -346,10 +516,21 @@ function setupControls() {
         this.textContent = panel.classList.contains('collapsed') ? '▶' : '◀';
     });
 
+    // 数据文件选择
+    document.getElementById('dataFileSelect').addEventListener('change', function() {
+        const selectedFile = this.value;
+        if (selectedFile) {
+            currentDataFile = selectedFile;
+            loadWindData(currentDataFile);
+        }
+    });
+
     // 时间选择
     document.getElementById('timeSelect').addEventListener('change', function() {
-        // 这里可以实现切换不同时间点的逻辑
-        console.log('选择时间点:', this.value);
+        const selectedTimeIndex = parseInt(this.value);
+        if (!isNaN(selectedTimeIndex) && currentDataFile) {
+            loadWindDataAtTimeIndex(currentDataFile, selectedTimeIndex);
+        }
     });
 
     // 粒子数量
@@ -392,7 +573,7 @@ function setupControls() {
 function init() {
     initMap();
     setupControls();
-    loadWindData();
+    loadAvailableDataFiles(); // 加载可用的数据文件列表
 }
 
 // 页面加载完成后初始化
