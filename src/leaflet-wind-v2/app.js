@@ -2,6 +2,7 @@ let map, windLayer, isWindVisible = true;
 
 let availableDataFiles = [];
 let currentDataFile = null;
+let currentWindData = null; // 存储当前风场数据用于导出
 
 // 获取可用的JSON数据文件列表
 async function loadAvailableDataFiles() {
@@ -196,6 +197,9 @@ async function loadWindData(filename = 'outputV2.json', timeIndex = 0) {
         const windData = parseRawData(rawData, timeIndex);
         const velocityData = convertToVelocityFormat(windData);
 
+        // 保存当前风场数据用于导出
+        currentWindData = windData;
+
         if (windLayer) map.removeLayer(windLayer);
 
         windLayer = L.velocityLayer({
@@ -321,10 +325,16 @@ function parseRawData(rawData, timeIndex = 0) {
     const u10Data = [];
     const v10Data = [];
 
-    for (let lat = 0; lat < latData.length; lat++) {
-        for (let lon = 0; lon < lonData.length; lon++) {
-            u10Data.push(u10_3d[lat][lon]);
-            v10Data.push(v10_3d[lat][lon]);
+    // 按照leaflet-velocity期望的顺序：从北到南，从西到东
+    // 遍历顺序：纬度从大到小（北到南），经度从小到大（西到东）
+    for (let latIdx = 0; latIdx < latData.length; latIdx++) {
+        for (let lonIdx = 0; lonIdx < lonData.length; lonIdx++) {
+            // 从北到南的顺序，所以纬度索引对应latData[latIdx]（从0到length-1是纬度从大到小）
+            // 但如果我们数据中latData数组本身是从小到大排列的，我们需要调整
+            const uValue = u10_3d[latIdx][lonIdx];
+            const vValue = v10_3d[latIdx][lonIdx];
+            u10Data.push(uValue);
+            v10Data.push(vValue);
         }
     }
 
@@ -452,74 +462,138 @@ function updateTimeSelector(rawData) {
     }
 }
 
-// 设置控制面板
-function setupControls() {
-    // 控制面板切换
-    document.getElementById('controlToggle').addEventListener('click', function() {
-        const panel = document.getElementById('controlPanel');
-        panel.classList.toggle('collapsed');
-        this.textContent = panel.classList.contains('collapsed') ? '▶' : '◀';
-    });
+// 导出风场数据为JSON格式
+function exportWindData() {
+    if (!currentWindData) {
+        alert('请先加载风场数据');
+        return;
+    }
 
-    // 数据文件选择
+    // 创建包含风速、风向、坐标和UV分量的二维数组
+    const windFieldData = [];
+    const { width, height, lonData, latData, u10Data, v10Data } = currentWindData;
+
+    for (let row = 0; row < height; row++) {
+        const rowData = [];
+        for (let col = 0; col < width; col++) {
+            const index = row * width + col;
+            const u = u10Data[index];
+            const v = v10Data[index];
+            const speed = Math.sqrt(u * u + v * v);
+            // 计算风向（度数，从正北方向顺时针测量）- 使用气象学标准公式
+            // 气象学中风向是指风的来向，0度是北风，90度是东风
+            // 使用atan2(u, v)而不是atan2(v, u)，这是气象学标准
+            let direction = (180 + Math.atan2(u, v) * 180 / Math.PI) % 360;
+            if (direction < 0) {
+                direction += 360;
+            }
+            
+            rowData.push({
+                lon: lonData[col],
+                lat: latData[row],
+                u: u,
+                v: v,
+                speed: speed,
+                direction: direction
+            });
+        }
+        windFieldData.push(rowData);
+    }
+
+    // 创建导出数据对象
+    const exportData = {
+        metadata: {
+            width: width,
+            height: height,
+            totalPoints: width * height,
+            timeIndex: currentWindData.timeIndex,
+            bounds: {
+                minLon: currentWindData.lonMin,
+                maxLon: currentWindData.lonMax,
+                minLat: currentWindData.latMin,
+                maxLat: currentWindData.latMax
+            }
+        },
+        windData: windFieldData
+    };
+
+    // 将数据转换为JSON字符串
+    const jsonData = JSON.stringify(exportData, null, 2);
+
+    // 创建下载链接
+    const blob = new Blob([jsonData], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `wind_field_data_time_${currentWindData.timeIndex}.json`;
+    document.body.appendChild(a);
+    a.click();
+    
+    // 清理
+    setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, 100);
+}
+
+// 页面加载完成后初始化
+document.addEventListener('DOMContentLoaded', async function() {
+    initMap();
+    await loadAvailableDataFiles();
+
+    // 添加控制面板事件监听器
     document.getElementById('dataFileSelect').addEventListener('change', function() {
-        const selectedFile = this.value;
-        if (selectedFile) {
-            currentDataFile = selectedFile;
-            loadWindData(currentDataFile);
+        if (this.value) {
+            currentDataFile = this.value;
+            loadWindData(this.value);
         }
     });
 
-    // 时间选择
     document.getElementById('timeSelect').addEventListener('change', function() {
-        const selectedTimeIndex = parseInt(this.value);
-        if (!isNaN(selectedTimeIndex) && currentDataFile) {
-            loadWindData(currentDataFile, selectedTimeIndex);
+        if (currentDataFile) {
+            loadWindData(currentDataFile, parseInt(this.value));
         }
     });
 
-    // 粒子数量
     document.getElementById('particleSlider').addEventListener('input', function() {
-        const value = this.value;
-        document.getElementById('particleCount').textContent = value;
+        document.getElementById('particleCount').textContent = this.value;
         if (windLayer) {
-            // 根据滑块值计算粒子倍数
-            const multiplier = value / 1000000; // 2000 -> 0.002
-            windLayer.setOptions({ particleMultiplier: multiplier });
+            windLayer.setOptions({
+                particleMultiplier: parseInt(this.value) / 500 / 1000
+            });
         }
     });
 
-    // 速度倍数
     document.getElementById('speedSlider').addEventListener('input', function() {
-        const value = parseFloat(this.value);
-        document.getElementById('speedFactor').textContent = value.toFixed(1);
+        document.getElementById('speedFactor').textContent = this.value;
         if (windLayer) {
-            windLayer.setOptions({ velocityScale: 0.01 * value });
+            windLayer.setOptions({
+                velocityScale: parseFloat(this.value) * 0.01
+            });
         }
     });
 
-    // 风场显示/隐藏
     document.getElementById('toggleWind').addEventListener('click', function() {
         if (windLayer) {
             if (isWindVisible) {
                 map.removeLayer(windLayer);
-                this.textContent = '👀 显示风场';
+                this.textContent = '🙈 显示风场';
                 isWindVisible = false;
             } else {
-                map.addLayer(windLayer);
+                windLayer.addTo(map);
                 this.textContent = '🙈 隐藏风场';
                 isWindVisible = true;
             }
         }
     });
-}
 
-// 初始化应用
-function init() {
-    initMap();
-    setupControls();
-    loadAvailableDataFiles(); // 加载可用的数据文件列表
-}
+    // 添加导出风场数据按钮的事件监听器
+    document.getElementById('downloadData').addEventListener('click', exportWindData);
 
-// 页面加载完成后初始化
-document.addEventListener('DOMContentLoaded', init);
+    // 控制面板折叠功能
+    document.getElementById('controlToggle').addEventListener('click', function() {
+        const panel = document.getElementById('controlPanel');
+        panel.classList.toggle('collapsed');
+        this.textContent = panel.classList.contains('collapsed') ? '▶' : '◀';
+    });
+});
