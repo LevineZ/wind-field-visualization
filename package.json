@@ -4,7 +4,7 @@
   "description": "Wind field visualization using Leaflet and Amap satellite tiles",
   "main": "index.html",
   "scripts": {
-    "start": "http-server -p 8080 -o src/leaflet-wind",
+    "start": "http-server -p 8088 -o src/leaflet-wind-v2",
     "build": "echo 'No build process needed'"
   },
   "dependencies": {
