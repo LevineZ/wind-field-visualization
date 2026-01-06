@@ -112,57 +112,20 @@ function initMap() {
     map.on('movestart', () => {
         console.log('开始移动');
         isMoving = true;
-        // 使用节流函数平滑调整参数
-        if (windLayer && !isDragging) {
-            isDragging = true;
-            requestAnimationFrame(() => {
-                if (windLayer) {
-                    windLayer.setOptions({
-                        frameRate: 60,
-                        particleMultiplier: 0.006,
-                        globalAlpha: 0.9
-                    });
-                }
-            });
-        }
     });
 
     map.on('moveend', () => {
         console.log('移动结束');
         isMoving = false;
         isDragging = false;
-        // 使用节流函数平滑恢复
-        requestAnimationFrame(() => {
-            if (windLayer && !isMoving) {
-                windLayer.setOptions({
-                    frameRate: 60,
-                    particleMultiplier: 0.006,
-                    globalAlpha: 0.9
-                });
-            }
-        });
     });
 
     map.on('zoomstart', () => {
         console.log('开始缩放');
-        if (windLayer) {
-            windLayer.setOptions({
-                frameRate: 24,
-                particleMultiplier: 0.001
-            });
-        }
     });
 
     map.on('zoomend', () => {
         console.log('缩放结束');
-        setTimeout(() => {
-            if (windLayer) {
-                windLayer.setOptions({
-                    frameRate: 60,
-                    particleMultiplier: 0.006
-                });
-            }
-        }, 300);
     });
 
     monitorPerformance();
@@ -202,6 +165,21 @@ async function loadWindData(filename = 'outputV2.json', timeIndex = 0) {
 
         if (windLayer) map.removeLayer(windLayer);
 
+        // 计算基于地理空间的粒子密度
+        const calculateParticleDensity = () => {
+            const zoom = map.getZoom();
+            const bounds = map.getBounds();
+            const viewArea = (bounds.getEast() - bounds.getWest()) * (bounds.getNorth() - bounds.getSouth());
+            
+            // 基础粒子密度：每平方度约100个粒子
+            const baseParticlesPerSquareDegree = 100;
+            const targetParticles = Math.max(500, Math.min(5000, viewArea * baseParticlesPerSquareDegree));
+            
+            // 转换为particleMultiplier（leaflet-velocity内部使用）
+            const canvasArea = map.getSize().x * map.getSize().y;
+            return targetParticles / canvasArea;
+        };
+
         windLayer = L.velocityLayer({
             displayValues: true,
             displayOptions: {
@@ -215,12 +193,29 @@ async function loadWindData(filename = 'outputV2.json', timeIndex = 0) {
             velocityScale: 0.01,
             particleAge: 60,
             lineWidth: 1,
-            particleMultiplier: 3000/500/1000,
+            particleMultiplier: calculateParticleDensity(),
             frameRate: 60,
             colorScale: ['#3288bd', '#66c2a5', '#abdda4', '#e6f598', '#fee08b', '#fdae61', '#f46d43', '#d53e4f'],
             minVelocity: 0,
-            globalAlpha: 0.9
+            globalAlpha: 0.9,
+            // 禁用插值，使用真实数据点
+            interpolate: false
         }).addTo(map);
+
+        // 监听地图缩放和移动事件，动态调整粒子密度
+        const updateParticleDensity = () => {
+            if (windLayer) {
+                const newDensity = calculateParticleDensity();
+                windLayer.setOptions({
+                    particleMultiplier: newDensity
+                });
+                console.log(`缩放级别: ${map.getZoom()}, 粒子密度: ${newDensity.toFixed(6)}`);
+            }
+        };
+
+        map.off('zoomend moveend');
+        map.on('zoomend', updateParticleDensity);
+        map.on('moveend', updateParticleDensity);
 
         // 设置地图边界和中心点
         const bounds = L.latLngBounds(
@@ -238,9 +233,8 @@ async function loadWindData(filename = 'outputV2.json', timeIndex = 0) {
         map.setView([centerLat, centerLon], 6);
 
         // 监听缩放事件，只在缩小超出边界时限制
-        map.off('zoomend');
         let lastZoom = map.getZoom();
-        map.on('zoomend', function() {
+        map.on('zoom', function() {
             const currentZoom = map.getZoom();
             const currentBounds = map.getBounds();
 
@@ -376,24 +370,13 @@ function parseRawData(rawData, timeIndex = 0) {
     };
 }
 
-// 转换为leaflet-velocity格式（改进版）
+// 转换为leaflet-velocity格式（禁用插值版本）
 function convertToVelocityFormat(windData) {
-    // 根据网格均匀性选择合适的步长计算方式
-    let lonStep, latStep;
-    
-    if (windData.lonGridInfo.isUniform) {
-        // 均匀网格使用平均步长
-        lonStep = windData.lonGridInfo.avgStep;
-    } else {
-        // 非均匀网格使用首尾差值的平均值
-        lonStep = (windData.lonMax - windData.lonMin) / (windData.width - 1);
-    }
-    
-    if (windData.latGridInfo.isUniform) {
-        latStep = windData.latGridInfo.avgStep;
-    } else {
-        latStep = (windData.latMax - windData.latMin) / (windData.height - 1);
-    }
+    // 使用真实的网格坐标而不是均匀插值
+    const lonStep = windData.lonGridInfo.isUniform ? windData.lonGridInfo.avgStep : 
+                   (windData.lonMax - windData.lonMin) / (windData.width - 1);
+    const latStep = windData.latGridInfo.isUniform ? windData.latGridInfo.avgStep : 
+                   (windData.latMax - windData.latMin) / (windData.height - 1);
 
     return [
         {
@@ -407,10 +390,12 @@ function convertToVelocityFormat(windData) {
                 lo1: windData.lonMin,
                 lo2: windData.lonMax,
                 nx: windData.width,
-                ny: windData.height
+                ny: windData.height,
+                // 标记为非均匀网格，禁用插值
+                nonUniformGrid: !windData.lonGridInfo.isUniform || !windData.latGridInfo.isUniform
             },
             data: windData.u10Data,
-            // 保留实际坐标信息用于插值
+            // 保留实际坐标信息用于精确定位
             lonCoords: windData.lonData,
             latCoords: windData.latData
         },
@@ -425,7 +410,8 @@ function convertToVelocityFormat(windData) {
                 lo1: windData.lonMin,
                 lo2: windData.lonMax,
                 nx: windData.width,
-                ny: windData.height
+                ny: windData.height,
+                nonUniformGrid: !windData.lonGridInfo.isUniform || !windData.latGridInfo.isUniform
             },
             data: windData.v10Data,
             lonCoords: windData.lonData,
@@ -444,6 +430,8 @@ function updateDataInfo(windData, filename, timeIndex = 0) {
         <div><strong>📏 网格尺寸:</strong> ${windData.width} × ${windData.height}</div>
         <div><strong>🔢 数据点数:</strong> ${windData.totalPoints.toLocaleString()}</div>
         <div><strong>📏 网格均匀性:</strong> 经度: ${windData.lonGridInfo.isUniform ? '是' : '否'}, 纬度: ${windData.latGridInfo.isUniform ? '是' : '否'}</div>
+        <div><strong>🎯 插值状态:</strong> <span style="color: #d53e4f;">已禁用</span> (使用真实数据点)</div>
+        <div><strong>🔵 粒子分布:</strong> <span style="color: #4CAF50;">基于地理空间</span></div>
     `;
 }
 
@@ -558,8 +546,17 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.getElementById('particleSlider').addEventListener('input', function() {
         document.getElementById('particleCount').textContent = this.value;
         if (windLayer) {
+            // 使用新的基于地理空间的粒子密度计算
+            const zoom = map.getZoom();
+            const bounds = map.getBounds();
+            const viewArea = (bounds.getEast() - bounds.getWest()) * (bounds.getNorth() - bounds.getSouth());
+            const baseParticlesPerSquareDegree = parseInt(this.value) / 20; // 根据滑块值调整基础密度
+            const targetParticles = Math.max(500, Math.min(5000, viewArea * baseParticlesPerSquareDegree));
+            const canvasArea = map.getSize().x * map.getSize().y;
+            const particleMultiplier = targetParticles / canvasArea;
+            
             windLayer.setOptions({
-                particleMultiplier: parseInt(this.value) / 500 / 1000
+                particleMultiplier: particleMultiplier
             });
         }
     });
