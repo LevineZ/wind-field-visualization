@@ -131,7 +131,7 @@ function initMap() {
 // 加载原始JSON数据
 async function loadWindData() {
     try {
-        const response = await fetch('../../data/output_json/outputV2.json');
+        const response = await fetch('data/output_json/outputV2.json');
         const rawData = await response.json();
 
         console.log('原始数据加载完成', rawData);
