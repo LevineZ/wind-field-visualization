@@ -223,13 +223,13 @@ async function loadWindData(filename = 'outputV2.json', timeIndex = 0) {
         }).addTo(map);
 
         // 设置地图边界和中心点
-        const bounds = L.latLngBounds(
-            [windData.latMin, windData.lonMin],
-            [windData.latMax, windData.lonMax]
-        );
-
-        map.setMaxBounds(bounds);
-        map.setMinZoom(7);
+        // const bounds = L.latLngBounds(
+        //     [windData.latMin, windData.lonMin],
+        //     [windData.latMax, windData.lonMax]
+        // );
+        //
+        // map.setMaxBounds(bounds);
+        map.setMinZoom(5);
         map.setMaxZoom(15);
 
         // 动态计算并设置地图中心点
@@ -238,19 +238,19 @@ async function loadWindData(filename = 'outputV2.json', timeIndex = 0) {
         map.setView([centerLat, centerLon], 6);
 
         // 监听缩放事件，只在缩小超出边界时限制
-        map.off('zoomend');
-        let lastZoom = map.getZoom();
-        map.on('zoomend', function() {
-            const currentZoom = map.getZoom();
-            const currentBounds = map.getBounds();
+        // map.off('zoomend');
+        // let lastZoom = map.getZoom();
+        // map.on('zoomend', function() {
+        //     const currentZoom = map.getZoom();
+        //     const currentBounds = map.getBounds();
+        //
+        //     if (currentZoom < lastZoom && !bounds.contains(currentBounds)) {
+        //         map.fitBounds(bounds);
+        //     }
+        //     lastZoom = currentZoom;
+        // });
 
-            if (currentZoom < lastZoom && !bounds.contains(currentBounds)) {
-                map.fitBounds(bounds);
-            }
-            lastZoom = currentZoom;
-        });
-
-        map.fitBounds(bounds, { padding: [10, 10] });
+        // map.fitBounds(bounds, { padding: [10, 10] });
 
         // 更新信息显示
         updateDataInfo(windData, filename, timeIndex);
@@ -295,25 +295,25 @@ function parseRawData(rawData, timeIndex = 0) {
     // 检测网格分布是否均匀
     const checkGridUniformity = (coords, name) => {
         if (coords.length < 2) return { isUniform: true, avgStep: 0 };
-        
+
         const steps = [];
         for (let i = 0; i < coords.length - 1; i++) {
             steps.push(Math.abs(coords[i + 1] - coords[i]));
         }
-        
+
         const avgStep = steps.reduce((a, b) => a + b) / steps.length;
         const variance = steps.reduce((sum, step) => sum + Math.pow(step - avgStep, 2), 0) / steps.length;
         const stdDev = Math.sqrt(variance);
-        
+
         // 如果标准差小于平均步长的1%认为是均匀的
         const isUniform = stdDev < Math.abs(avgStep * 0.01);
-        
+
         return { isUniform, avgStep, stdDev, steps };
     };
-    
+
     const lonGridInfo = checkGridUniformity(lonData, 'longitude');
     const latGridInfo = checkGridUniformity(latData, 'latitude');
-    
+
     if (!lonGridInfo.isUniform || !latGridInfo.isUniform) {
         console.warn('检测到非均匀网格分布:', {
             lon: { isUniform: lonGridInfo.isUniform, stdDev: lonGridInfo.stdDev },
@@ -380,7 +380,7 @@ function parseRawData(rawData, timeIndex = 0) {
 function convertToVelocityFormat(windData) {
     // 根据网格均匀性选择合适的步长计算方式
     let lonStep, latStep;
-    
+
     if (windData.lonGridInfo.isUniform) {
         // 均匀网格使用平均步长
         lonStep = windData.lonGridInfo.avgStep;
@@ -388,7 +388,7 @@ function convertToVelocityFormat(windData) {
         // 非均匀网格使用首尾差值的平均值
         lonStep = (windData.lonMax - windData.lonMin) / (windData.width - 1);
     }
-    
+
     if (windData.latGridInfo.isUniform) {
         latStep = windData.latGridInfo.avgStep;
     } else {
@@ -487,7 +487,7 @@ function exportWindData() {
             if (direction < 0) {
                 direction += 360;
             }
-            
+
             rowData.push({
                 lon: lonData[col],
                 lat: latData[row],
@@ -528,7 +528,7 @@ function exportWindData() {
     a.download = `wind_field_data_time_${currentWindData.timeIndex}.json`;
     document.body.appendChild(a);
     a.click();
-    
+
     // 清理
     setTimeout(() => {
         document.body.removeChild(a);
