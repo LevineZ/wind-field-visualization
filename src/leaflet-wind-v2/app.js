@@ -6,15 +6,19 @@ let currentWindData = null; // 存储当前风场数据用于导出
 
 // 获取可用的JSON数据文件列表
 async function loadAvailableDataFiles() {
+    console.log('开始加载可用数据文件列表...');
     try {
         // 尝试读取目录中的文件列表
         const response = await fetch('../../data/output_json/');
+        console.log('目录响应状态:', response.status);
         const text = await response.text();
+        console.log('目录响应内容长度:', text.length);
 
         // 解析HTML目录列表，提取JSON文件
         const parser = new DOMParser();
         const doc = parser.parseFromString(text, 'text/html');
         const links = doc.querySelectorAll('a[href$=".json"]');
+        console.log('找到的JSON文件数量:', links.length);
 
         availableDataFiles = Array.from(links).map(link => {
             const filename = link.getAttribute('href');
@@ -149,8 +153,12 @@ function initMap() {
 
 // 加载风场数据（统一函数）
 async function loadWindData(filename = 'outputV2.json', timeIndex = 0) {
+    console.log('loadWindData 被调用, filename:', filename, 'timeIndex:', timeIndex);
     try {
-        const response = await fetch(`../../data/output_json/${filename}`);
+        const dataUrl = `../../data/output_json/${filename}`;
+        console.log('正在请求数据文件:', dataUrl);
+        const response = await fetch(dataUrl);
+        console.log('数据文件响应状态:', response.status);
         const rawData = await response.json();
 
         console.log('原始数据加载完成', rawData);
@@ -528,6 +536,14 @@ function exportWindData() {
 document.addEventListener('DOMContentLoaded', async function() {
     initMap();
     await loadAvailableDataFiles();
+
+    // 自动加载第一个可用的数据文件
+    if (availableDataFiles.length > 0) {
+        const defaultFile = availableDataFiles[0].filename;
+        document.getElementById('dataFileSelect').value = defaultFile;
+        currentDataFile = defaultFile;
+        loadWindData(defaultFile);
+    }
 
     // 添加控制面板事件监听器
     document.getElementById('dataFileSelect').addEventListener('change', function() {
