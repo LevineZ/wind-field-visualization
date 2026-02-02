@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>风场可视化 - 高德卫星地图</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="velocity-override.css" />
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #map { height: 100vh; width: 100vw; }
+        .control-panel {
+            position: absolute; top: 15px; right: 15px;
+            background: rgba(255, 255, 255, 0.95); padding: 20px;
+            border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            z-index: 1000; min-width: 280px; backdrop-filter: blur(10px);
+            transition: transform 0.3s ease;
+        }
+        .control-panel.collapsed {
+            transform: translateX(calc(100% - 40px));
+        }
+        .control-toggle {
+            position: absolute; left: -40px; top: 50%;
+            transform: translateY(-50%);
+            background: rgba(255, 255, 255, 0.9);
+            border: none; border-radius: 8px 0 0 8px;
+            padding: 10px 8px; cursor: pointer;
+            font-size: 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            width: 40px; height: 40px;
+        }
+        .control-panel h3 {
+            margin: 0 0 15px 0; font-size: 16px; color: #333;
+            border-bottom: 2px solid #4CAF50; padding-bottom: 8px;
+        }
+        .control-item { margin: 12px 0; }
+        .control-item label { 
+            display: block; font-size: 13px; margin-bottom: 6px; 
+            color: #555; font-weight: 500;
+        }
+        .control-item input[type="range"] {
+            width: 100%; height: 6px; border-radius: 3px;
+            background: #ddd; outline: none; -webkit-appearance: none;
+        }
+        .control-item input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 18px; height: 18px;
+            border-radius: 50%; background: #4CAF50; cursor: pointer;
+        }
+        .control-item select {
+            width: 100%; padding: 8px; border: 2px solid #ddd;
+            border-radius: 6px; background: white; font-size: 13px;
+        }
+        .control-item select:focus { border-color: #4CAF50; outline: none; }
+        .control-item button {
+            width: 100%; padding: 10px; margin: 4px 0;
+            border: none; border-radius: 6px; font-size: 13px;
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white; cursor: pointer; transition: all 0.3s;
+        }
+        .control-item button:hover {
+            background: linear-gradient(135deg, #45a049, #3d8b40);
+            transform: translateY(-1px);
+        }
+        .data-info {
+            font-size: 12px; color: #666; margin-top: 15px;
+            padding-top: 15px; border-top: 1px solid #eee;
+            background: rgba(248, 249, 250, 0.8); padding: 12px;
+            border-radius: 6px;
+        }
+        .data-info div { margin: 3px 0; }
+        .range-value {
+            display: inline-block; min-width: 40px; text-align: right;
+            font-weight: bold; color: #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="control-panel" id="controlPanel">
+        <button class="control-toggle" id="controlToggle">◀</button>
+        <h3>🌪️ 风场控制</h3>
+        <div class="control-item">
+            <label>⏰ 时间选择:</label>
+            <select id="timeSelect"><option value="">选择时间...</option></select>
+        </div>
+        <div class="control-item">
+            <label>🔵 粒子数量: <span class="range-value" id="particleCount">3000</span></label>
+            <input type="range" id="particleSlider" min="500" max="5000" value="3000" step="500">
+        </div>
+        <div class="control-item">
+            <label>⚡ 速度倍数: <span class="range-value" id="speedFactor">1.0</span></label>
+            <input type="range" id="speedSlider" min="0.1" max="3.0" value="1.0" step="0.1">
+        </div>
+        <div class="control-item">
+            <button id="toggleWind">🙈 隐藏风场</button>
+        </div>
+        <div class="data-info" id="dataInfo">
+            <div><strong>📊 数据源:</strong> WRF Model Output</div>
+            <div><strong>📅 当前时间:</strong> 未加载</div>
+            <div><strong>💨 风速范围:</strong> 未加载</div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-velocity@1.4.0/dist/leaflet-velocity.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
