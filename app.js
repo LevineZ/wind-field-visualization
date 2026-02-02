@@ -9,7 +9,7 @@ async function loadAvailableDataFiles() {
     console.log('开始加载可用数据文件列表...');
     try {
         // 尝试读取目录中的文件列表
-        const response = await fetch('../../data/output_json/');
+        const response = await fetch('./data/output_json/');
         console.log('目录响应状态:', response.status);
         const text = await response.text();
         console.log('目录响应内容长度:', text.length);
@@ -155,7 +155,7 @@ function initMap() {
 async function loadWindData(filename = 'outputV2.json', timeIndex = 0) {
     console.log('loadWindData 被调用, filename:', filename, 'timeIndex:', timeIndex);
     try {
-        const dataUrl = `../../data/output_json/${filename}`;
+        const dataUrl = `./data/output_json/${filename}`;
         console.log('正在请求数据文件:', dataUrl);
         const response = await fetch(dataUrl);
         console.log('数据文件响应状态:', response.status);
