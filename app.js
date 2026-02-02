@@ -8,26 +8,10 @@ let currentWindData = null; // 存储当前风场数据用于导出
 async function loadAvailableDataFiles() {
     console.log('开始加载可用数据文件列表...');
     try {
-        // 尝试读取目录中的文件列表
-        const response = await fetch('./data/output_json/');
-        console.log('目录响应状态:', response.status);
-        const text = await response.text();
-        console.log('目录响应内容长度:', text.length);
-
-        // 解析HTML目录列表，提取JSON文件
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(text, 'text/html');
-        const links = doc.querySelectorAll('a[href$=".json"]');
-        console.log('找到的JSON文件数量:', links.length);
-
-        availableDataFiles = Array.from(links).map(link => {
-            const filename = link.getAttribute('href');
-            return {
-                filename: filename,
-                displayName: filename.replace('.json', '').replace(/[_-]/g, ' ')
-            };
-        });
-
+        // GitHub Pages不支持目录列表，直接使用默认文件
+        availableDataFiles = [
+            { filename: 'outputV2.json', displayName: 'outputV2' }
+        ];
         updateDataFileSelector();
 
     } catch (error) {
